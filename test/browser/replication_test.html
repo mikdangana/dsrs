@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>DSRS Replication Test</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 20px;
+    }
+    canvas {
+      max-width: 100%;
+      margin-top: 30px;
+    }
+    button {
+      padding: 8px 12px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+
+<h1>DSRS Replication Metrics</h1>
+
+<button id="start">Start Test</button>
+<button id="stop">Stop</button>
+<pre id="log"></pre>
+
+<canvas id="lagChart"></canvas>
+<canvas id="offsetChart"></canvas>
+
+<script type="module">
+/* ================= CONFIG ================= */
+
+const CORE_URL = "http://localhost:8080/state";
+const CORE = "http://localhost:8080";
+
+async function fetchJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`${url} -> ${r.status}`);
+  return r.json();
+}
+
+async function discoverReplicas() {
+  // ask core which replicas exist
+  const replicas = await fetchJSON(`${CORE}/replicas`);
+  console.log("Discovered replicas:", replicas);
+  return replicas;
+}
+
+// Update these to match mapped ports from docker compose
+const NUM_REPLICAS = 10
+const REPLICA_PORT_BASE = 32928
+const REPLICAS = [];
+for (var i=0; i<NUM_REPLICAS; i++) 
+  REPLICAS.push({id: `replica-${i}`, url: `http://localhost:${REPLICA_PORT_BASE+i}/state`});
+
+const POLL_MS = 1000;
+
+function mean(arr) {
+  const v = arr.filter(x => typeof x === "number");
+  if (!v.length) return 0;
+  return v.reduce((a, b) => a + b, 0) / v.length;
+}
+
+function stddev(arr) {
+  const v = arr.filter(x => typeof x === "number");
+  if (v.length < 2) return 0;
+  const m = mean(v);
+  return Math.sqrt(mean(v.map(x => (x - m) ** 2)));
+}
+
+/* ================= STATE ================= */
+
+let startTime = Date.now();
+let running = false;
+
+
+const time = [];
+const coreOffsets = [];
+const replicaLag = Object.fromEntries(
+  REPLICAS.map(r => [r.id, []])
+);
+
+/* ================= CHARTS ================= */
+
+const lagChart = new Chart(
+  document.getElementById("lagChart"),
+  {
+    type: "line",
+    data: {
+      labels: time,
+      datasets: REPLICAS.map(r => ({
+        label: `${r.id} lag`,
+        data: replicaLag[r.id],
+        borderWidth: 2,
+        tension: 0.2
+      }))
+    },
+    options: {
+      plugins: {
+        title: {
+          display: true,
+          text: "Replica Lag (core_offset − replica_offset)"
+        }
+      },
+      scales: {
+        x: { title: { display: true, text: "Time (s)" } },
+        y: { title: { display: true, text: "Lag" } }
+      }
+    }
+  }
+);
+
+
+const offsetChart = new Chart(
+  document.getElementById("offsetChart"),
+  {
+    type: "line",
+    data: {
+      labels: time,
+      datasets: [{
+        label: "Core offset",
+        data: coreOffsets,
+        borderWidth: 2,
+        tension: 0.2
+      }]
+    },
+    options: {
+      plugins: {
+        title: {
+          display: true,
+          text: "Core Offset Growth"
+        }
+      },
+      scales: {
+        x: { title: { display: true, text: "Time (s)" } },
+        y: { title: { display: true, text: "Offset" } }
+      }
+    }
+  }
+);
+
+
+/* ================= LOGIC ================= */
+
+async function fetchState(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
+async function tick() {
+  if (!running) return;
+
+  const now = (Date.now() - startTime) / 1000;
+  time.push(now.toFixed(1));
+
+  // --- core ---
+  const core = await fetchState(CORE_URL);
+  coreOffsets.push(core.coreOffset);
+
+  // --- replicas ---
+  for (const r of REPLICAS) {
+    try {
+      const rep = await fetchState(r.url);
+
+      if (
+        typeof core.coreOffset === "number" &&
+        typeof rep.replicaOffset === "number"
+      ) {
+        replicaLag[r.id].push(core.coreOffset - rep.replicaOffset);
+      } else {
+        replicaLag[r.id].push(null);
+      }
+    } catch {
+      replicaLag[r.id].push(null);
+    }
+  }
+
+  const allLag = Object.values(replicaLag).flat();
+
+  const lagMean = mean(allLag);
+  const lagStd = stddev(allLag);
+
+  lagChart.options.plugins.title.text =
+    `Replica Lag — mean=${lagMean.toFixed(2)}, σ=${lagStd.toFixed(2)}`;
+  console.log("replicaLag =" + replicaLag);
+
+  const coreMean = mean(coreOffsets);
+  const coreStd = stddev(coreOffsets);
+
+  offsetChart.options.plugins.title.text =
+    `Core Offset — mean=${coreMean.toFixed(1)}, σ=${coreStd.toFixed(1)}`;
+
+  lagChart.update();
+  offsetChart.update();
+
+  setTimeout(tick, POLL_MS);
+}
+
+
+
+/* ================= UI ================= */
+
+document.getElementById("start").onclick = () => {
+  if (running) return;
+  running = true;
+  startTime = Date.now();
+  tick();
+};
+
+document.getElementById("stop").onclick = () => {
+  running = false;
+};
+</script>
+
+</body>
+</html>
+

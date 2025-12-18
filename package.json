@@ -1,0 +1,14 @@
+{
+  "name": "dsrs",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm exec --workspaces -- npm run build",
+    "dev": "npm exec --workspaces -- npm run dev"
+  },
+  "dependencies": {
+    "cors": "^2.8.5"
+  }
+}

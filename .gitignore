@@ -1,0 +1,28 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# Build outputs
+dist/
+packages/*/dist/
+
+# TypeScript
+*.tsbuildinfo
+
+# Plotting
+plot_replica_scaling.py
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Docker
+*.log
+
+# Env files
+.env
+.env.*
+

@@ -1,0 +1,33 @@
+services:
+  core:
+    build:
+      context: .
+      dockerfile: packages/core/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - MUTATE_MS=500
+      - LOG_MAX=50000
+
+  replica:
+    build:
+      context: .
+      dockerfile: packages/replica/Dockerfile
+    depends_on:
+      - core
+    environment:
+      - CORE_URL=http://core:8080
+      - PORT=8090
+      - REPLICA_ID=$HOSTNAME
+      - SELF_URL=$http://$$HOSTNAME:8090
+      - OFFSET_FILE=/data/offset.txt
+    volumes:
+      - replica_data:/data
+    ports:
+      - "0:8090"
+
+
+volumes:
+  replica_data:
+
